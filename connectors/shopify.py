@@ -44,6 +44,13 @@ class ShopifyConnector(BaseConnector):
         ingested_at = datetime.utcnow()
         for page in pages:
             for order in page.get("orders", []):
+                shipping_address = order.get("shipping_address") or {}
+                gateway_names = order.get("payment_gateway_names") or []
+                payment_method = (
+                    "COD"
+                    if "cash_on_delivery" in gateway_names or order.get("payment_gateway") == "cash_on_delivery"
+                    else "prepaid"
+                )
                 for item in order.get("line_items", []):
                     orders.append(NormalizedOrder(
                         merchant_id=self.merchant_id,
@@ -51,8 +58,8 @@ class ShopifyConnector(BaseConnector):
                         sku_id=item.get("sku") or str(item["variant_id"]),
                         quantity=item["quantity"],
                         unit_price_inr=float(Decimal(item["price"])),
-                        payment_method="COD" if order.get("payment_gateway") == "cash_on_delivery" else "prepaid",
-                        destination_pincode=order.get("shipping_address", {}).get("zip", ""),
+                        payment_method=payment_method,
+                        destination_pincode=shipping_address.get("zip", ""),
                         ordered_at=datetime.fromisoformat(order["created_at"].replace("Z", "+00:00")),
                         source=self.get_source_name(),
                         source_record_id=str(order["id"]),
