@@ -4,7 +4,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from dotenv import load_dotenv
 from supabase import Client, create_client
+
+load_dotenv()
 
 _client: Client | None = None
 
