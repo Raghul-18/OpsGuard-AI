@@ -1,4 +1,6 @@
 import os
+from collections import defaultdict
+from datetime import datetime
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -12,7 +14,9 @@ from chat.tools import (
     get_inventory_status,
     get_rto_rate,
     get_top_skus,
+    mark_action_taken,
 )
+from db.client import get_client, insert_row, update_row, upsert_rows
 from scripts.sync_runner import get_sync_status, run_sync
 
 load_dotenv()
@@ -56,6 +60,11 @@ class ToolRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class DisputeActionRequest(BaseModel):
+    reconciliation_id: str
+    note: str = "Marked via dashboard"
+
+
 def _credentials_from_env(include_shopify: bool) -> dict:
     credentials: dict[str, Any] = {}
 
@@ -72,26 +81,169 @@ def _credentials_from_env(include_shopify: bool) -> dict:
     return credentials
 
 
+def _latest_agent_run_at(merchant_id: str) -> str | None:
+    result = (
+        get_client()
+        .table("agent_runs")
+        .select("run_at")
+        .eq("merchant_id", merchant_id)
+        .order("run_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0]["run_at"] if result.data else None
+
+
+def _get_disputes(merchant_id: str) -> list[dict]:
+    result = (
+        get_client()
+        .table("reconciliation_results")
+        .select("*")
+        .eq("merchant_id", merchant_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/sync")
-def sync(request: SyncRequest) -> dict:
-    credentials = _credentials_from_env(request.include_shopify)
-    if request.include_shiprocket_mock:
-        credentials["shiprocket"] = {}
+@app.get("/api/summary")
+def summary(merchant_id: str = Query(default="demo_merchant")) -> dict:
+    disputes = _get_disputes(merchant_id)
+    inventory = get_inventory_status(merchant_id)
+    open_disputes = [item for item in disputes if item.get("status") == "open"]
 
     return {
-        "merchant_id": request.merchant_id,
-        "results": run_sync(request.merchant_id, credentials, since_days=request.since_days),
+        "open_disputes": len(open_disputes),
+        "total_disputed_inr": round(
+            sum(float(item.get("amount_disputed_inr") or 0) for item in open_disputes),
+            2,
+        ),
+        "low_stock_skus": inventory["low_stock_count"],
+        "last_agent_run": _latest_agent_run_at(merchant_id),
+    }
+
+
+@app.post("/api/sync")
+def sync(
+    request: SyncRequest | None = None,
+    merchant_id: str | None = Query(default=None),
+    since_days: int | None = Query(default=None),
+) -> dict:
+    payload = request or SyncRequest()
+    if merchant_id:
+        payload.merchant_id = merchant_id
+    if since_days:
+        payload.since_days = since_days
+
+    credentials = _credentials_from_env(payload.include_shopify)
+    if payload.include_shiprocket_mock:
+        credentials["shiprocket"] = {}
+
+    results = run_sync(payload.merchant_id, credentials, since_days=payload.since_days)
+    return {
+        "job_id": None,
+        "status": "done" if all(item["status"] == "done" for item in results.values()) else "failed",
+        "merchant_id": payload.merchant_id,
+        "results": results,
     }
 
 
 @app.get("/api/sync/status")
-def sync_status(merchant_id: str = Query(default="demo_merchant")) -> dict:
-    return {"merchant_id": merchant_id, "sync_jobs": get_sync_status(merchant_id)}
+def sync_status(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+    return get_sync_status(merchant_id)
+
+
+@app.get("/api/agent/runs")
+def agent_runs(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+    result = (
+        get_client()
+        .table("agent_runs")
+        .select("*")
+        .eq("merchant_id", merchant_id)
+        .order("run_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    return result.data or []
+
+
+@app.post("/api/agent/run")
+def agent_run(merchant_id: str = Query(default="demo_merchant")) -> dict:
+    mismatches = find_weight_mismatches(merchant_id)
+    grouped: dict[str, dict] = defaultdict(
+        lambda: {"courier": "", "shipment_count": 0, "total_disputed_inr": 0.0, "shipment_ids": []}
+    )
+
+    reconciliation_rows = []
+    for item in mismatches["mismatches"]:
+        courier = item["courier_name"]
+        group = grouped[courier]
+        group["courier"] = courier
+        group["shipment_count"] += 1
+        group["total_disputed_inr"] += item["overcharge_inr"]
+        group["shipment_ids"].append(item["row_id"])
+
+        reconciliation_rows.append({
+            "merchant_id": merchant_id,
+            "shipment_id": item["row_id"],
+            "discrepancy_type": "weight_overcharge",
+            "declared_value": item["weight_declared_kg"],
+            "charged_value": item["weight_charged_kg"],
+            "amount_disputed_inr": item["overcharge_inr"],
+            "status": "open",
+        })
+
+    if reconciliation_rows:
+        upsert_rows(
+            "reconciliation_results",
+            reconciliation_rows,
+            ["merchant_id", "shipment_id", "discrepancy_type"],
+        )
+
+    proposals = []
+    for group in grouped.values():
+        group["total_disputed_inr"] = round(group["total_disputed_inr"], 2)
+        group["action"] = "Create weight dispute in Shiprocket with cited shipment evidence."
+        proposals.append(group)
+
+    run = insert_row("agent_runs", {
+        "merchant_id": merchant_id,
+        "trigger": "manual",
+        "data_window_days": 30,
+        "shipments_scanned": mismatches["total_count"],
+        "findings": mismatches["mismatches"],
+        "proposals": proposals,
+        "reasoning": (
+            "Flagged shipments where charged weight exceeded declared weight by more "
+            "than the 10% tolerance threshold."
+        ),
+        "status": "completed",
+    })
+
+    return {"run_id": run.get("id"), "status": "completed"}
+
+
+@app.get("/api/disputes")
+def disputes(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+    return _get_disputes(merchant_id)
+
+
+@app.post("/api/disputes/action")
+def disputes_action(request: DisputeActionRequest) -> dict:
+    if "dismiss" in request.note.lower():
+        update_row("reconciliation_results", request.reconciliation_id, {
+            "status": "dismissed",
+            "actioned_at": datetime.utcnow().isoformat(),
+            "action_note": request.note,
+        })
+    else:
+        mark_action_taken(request.reconciliation_id, request.note)
+    return {"success": True}
 
 
 @app.post("/api/tools/run")
@@ -158,7 +310,9 @@ def chat(request: ChatRequest) -> dict:
 
     return {
         "merchant_id": request.merchant_id,
+        "response": answer,
         "answer": answer,
+        "citations": [],
         "tool": tool,
         "result": result,
         "row_ids": result.get("row_ids", []),
