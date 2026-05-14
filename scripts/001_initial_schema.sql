@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS sku_master (
     cost_price_inr      NUMERIC,
     packaging_weight_g  NUMERIC,
     reorder_level       INTEGER,
+    inventory_quantity  INTEGER,
     category            TEXT,
     source              TEXT,
     source_record_id    TEXT,
@@ -145,3 +146,6 @@ CREATE INDEX IF NOT EXISTS idx_sku_master_merchant ON sku_master(merchant_id, sk
 CREATE INDEX IF NOT EXISTS idx_reconciliation_merchant ON reconciliation_results(merchant_id, status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_merchant ON agent_runs(merchant_id, run_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_merchant ON sync_jobs(merchant_id, connector);
+
+-- Existing deployments: add inventory column if missing
+ALTER TABLE sku_master ADD COLUMN IF NOT EXISTS inventory_quantity INTEGER;

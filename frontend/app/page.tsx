@@ -15,7 +15,7 @@ import {
 import { useState } from "react";
 
 export default function DashboardPage() {
-  const { data, isLoading } = useSWR("summary", () => api.getSummary(), {
+  const { data, isLoading, error } = useSWR("summary", () => api.getSummary(), {
     refreshInterval: 60000,
   });
   const [syncing, setSyncing] = useState(false);
@@ -36,6 +36,13 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {isLoading ? (
           [1, 2, 3, 4].map((n) => <StatCardSkeleton key={n} />)
+        ) : error ? (
+          <>
+            <StatCard label="Open Disputes" value="Unavailable" sub="API request failed" icon={AlertTriangle} variant="danger" delay={0} />
+            <StatCard label="Total Disputed" value="Unavailable" sub="API request failed" icon={IndianRupee} variant="danger" delay={60} />
+            <StatCard label="Low Stock SKUs" value="Unavailable" sub="API request failed" icon={PackageOpen} variant="danger" delay={120} />
+            <StatCard label="Last Agent Run" value="Unavailable" sub="API request failed" icon={Bot} variant="danger" delay={180} />
+          </>
         ) : (
           <>
             <StatCard

@@ -11,6 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MERCHANT_ID } from "@/lib/api";
 
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -67,7 +68,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="px-4 py-4 border-t border-border">
         <p className="text-[11px] text-ink-faint font-mono">
-          demo_merchant
+          {MERCHANT_ID}
         </p>
         <p className="text-[10px] text-ink-faint mt-0.5">v1.1 · FastAPI + Next.js</p>
       </div>

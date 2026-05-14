@@ -8,6 +8,15 @@ from typing import Optional
 
 from db.client import get_client
 
+# Per-kg slab rates (aligned with connectors/shiprocket_mock.RATE_PER_KG); used instead of back-solving from invoice cost.
+COURIER_RATE_INR_PER_KG = {
+    "Delhivery": 45,
+    "BlueDart": 55,
+    "Ecom Express": 40,
+    "XpressBees": 42,
+    "DTDC": 38,
+}
+
 
 def find_weight_mismatches(merchant_id: str, days: int = 30) -> dict:
     """Find shipments where charged weight > declared weight × 1.1."""
@@ -28,8 +37,8 @@ def find_weight_mismatches(merchant_id: str, days: int = 30) -> dict:
         charged = row["weight_charged_kg"] or 0
         if declared > 0 and charged > declared * 1.1:
             overcharge_kg = charged - declared
-            # Approximate rate: cost / charged weight
-            rate = (row["shipping_cost_inr"] or 0) / charged if charged > 0 else 45
+            courier = row.get("courier_name") or ""
+            rate = COURIER_RATE_INR_PER_KG.get(courier, 45)
             overcharge_inr = round(overcharge_kg * rate, 2)
             mismatches.append({
                 "row_id": row["id"],
@@ -64,13 +73,20 @@ def get_rto_rate(merchant_id: str, sku_id: Optional[str] = None, pincode: Option
     if sku_id:
         orders_q = (
             client.table("orders")
-            .select("order_ref, sku_id")
+            .select("order_ref, sku_id, destination_pincode")
             .eq("merchant_id", merchant_id)
             .eq("sku_id", sku_id)
             .execute()
         )
-        order_refs = {o["order_ref"] for o in orders_q.data}
-        shipments = [s for s in shipments if s.get("order_ref") in order_refs]
+        order_rows = orders_q.data or []
+        order_refs = {o["order_ref"] for o in order_rows}
+        sku_pincodes = {o["destination_pincode"] for o in order_rows if o.get("destination_pincode")}
+        by_ref = [s for s in shipments if s.get("order_ref") in order_refs]
+        if by_ref:
+            shipments = by_ref
+        elif sku_pincodes:
+            # Mock Shiprocket uses synthetic order_ref; align demo data by destination pincode
+            shipments = [s for s in shipments if s.get("destination_pincode") in sku_pincodes]
 
     total = len(shipments)
     rto_count = sum(1 for s in shipments if s.get("rto"))
@@ -162,43 +178,25 @@ def get_inventory_status(merchant_id: str) -> dict:
 
     skus = (
         client.table("sku_master")
-        .select("id, sku_id, name, reorder_level, category")
+        .select("id, sku_id, name, reorder_level, inventory_quantity, category")
         .eq("merchant_id", merchant_id)
         .execute()
-    ).data
+    ).data or []
 
-    # Get current inventory from orders (units sold - returned)
-    orders = (
-        client.table("orders")
-        .select("sku_id, quantity")
-        .eq("merchant_id", merchant_id)
-        .execute()
-    ).data
-
-    sold_by_sku: dict[str, int] = {}
-    for o in orders:
-        sold_by_sku[o["sku_id"]] = sold_by_sku.get(o["sku_id"], 0) + o["quantity"]
-
-    low_stock = []
-    for sku in skus:
-        # Use reorder_level as proxy for current stock (demo simplification)
-        sold = sold_by_sku.get(sku["sku_id"], 0)
-        # Flag if reorder_level > 0 and sold units are high (simplified heuristic)
-        if sku["reorder_level"] and sold > sku["reorder_level"] * 10:
-            low_stock.append({
-                "row_id": sku["id"],
-                "sku_id": sku["sku_id"],
-                "name": sku["name"],
-                "reorder_level": sku["reorder_level"],
-                "units_sold": sold,
-                "category": sku["category"],
-            })
+    low_stock = [
+        s
+        for s in skus
+        if s.get("reorder_level") is not None
+        and s.get("inventory_quantity") is not None
+        and int(s["reorder_level"]) > 0
+        and int(s["inventory_quantity"]) <= int(s["reorder_level"])
+    ]
 
     return {
         "low_stock_skus": low_stock,
         "total_skus": len(skus),
         "low_stock_count": len(low_stock),
-        "row_ids": [item["row_id"] for item in low_stock],
+        "row_ids": [s["id"] for s in low_stock],
     }
 
 

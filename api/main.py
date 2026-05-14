@@ -1,4 +1,5 @@
 import os
+import json
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Literal
@@ -8,6 +9,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from chat.citation import extract_row_ids
+from chat.groq_loop import run_chat_loop
 from chat.tools import (
     calculate_pnl,
     find_weight_mismatches,
@@ -36,20 +39,21 @@ app.add_middleware(
 
 
 class SyncRequest(BaseModel):
-    merchant_id: str = "demo_merchant"
+    merchant_id: str = "merchant_demo"
     since_days: int = Field(default=30, ge=1, le=365)
     include_shopify: bool = True
-    include_shiprocket_mock: bool = True
+    include_gsheets: bool = True
+    include_shiprocket_mock: bool = False
 
 
 class ChatRequest(BaseModel):
-    merchant_id: str = "demo_merchant"
+    merchant_id: str = "merchant_demo"
     message: str
     history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ToolRequest(BaseModel):
-    merchant_id: str = "demo_merchant"
+    merchant_id: str = "merchant_demo"
     tool: Literal[
         "find_weight_mismatches",
         "get_rto_rate",
@@ -65,18 +69,36 @@ class DisputeActionRequest(BaseModel):
     note: str = "Marked via dashboard"
 
 
-def _credentials_from_env(include_shopify: bool) -> dict:
-    credentials: dict[str, Any] = {}
+def _json_env(name: str) -> dict | None:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{name} must be valid JSON") from exc
 
-    if include_shopify:
+
+def _credentials_from_env(payload: SyncRequest) -> dict:
+    credentials: dict[str, Any] = {
+        "shiprocket_mock": payload.include_shiprocket_mock or os.environ.get("ENABLE_SHIPROCKET_MOCK") == "true",
+    }
+
+    if payload.include_shopify:
         shop = os.environ.get("SHOPIFY_SHOP")
         token = os.environ.get("SHOPIFY_ACCESS_TOKEN")
-        if not shop or not token:
-            raise HTTPException(
-                status_code=400,
-                detail="SHOPIFY_SHOP and SHOPIFY_ACCESS_TOKEN must be set for Shopify sync",
-            )
-        credentials["shopify"] = {"shop": shop, "access_token": token}
+        if shop and token:
+            credentials["shopify"] = {"shop": shop, "access_token": token}
+
+    if payload.include_gsheets:
+        spreadsheet_id = os.environ.get("GSHEETS_SPREADSHEET_ID") or os.environ.get("GOOGLE_SHEET_ID")
+        service_account_info = _json_env("GOOGLE_SERVICE_ACCOUNT_JSON")
+        if spreadsheet_id and service_account_info:
+            credentials["gsheets"] = {
+                "spreadsheet_id": spreadsheet_id,
+                "sheet_range": os.environ.get("GSHEETS_RANGE", "Sheet1"),
+                "service_account_info": service_account_info,
+            }
 
     return credentials
 
@@ -106,13 +128,30 @@ def _get_disputes(merchant_id: str) -> list[dict]:
     return result.data or []
 
 
+def _citation_metadata(row_ids: list[str]) -> list[dict]:
+    if not row_ids:
+        return []
+    citations = []
+    client = get_client()
+    for table in ("orders", "shipments", "sku_master"):
+        rows = client.table(table).select("id, source, source_record_id, ingested_at").in_("id", row_ids).execute().data or []
+        for row in rows:
+            citations.append({
+                "row_id": row["id"],
+                "source": row.get("source") or table,
+                "source_record_id": row.get("source_record_id") or row["id"],
+                "ingested_at": row.get("ingested_at"),
+            })
+    return citations
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
 
 @app.get("/api/summary")
-def summary(merchant_id: str = Query(default="demo_merchant")) -> dict:
+def summary(merchant_id: str = Query(default="merchant_demo")) -> dict:
     disputes = _get_disputes(merchant_id)
     inventory = get_inventory_status(merchant_id)
     open_disputes = [item for item in disputes if item.get("status") == "open"]
@@ -140,10 +179,7 @@ def sync(
     if since_days:
         payload.since_days = since_days
 
-    credentials = _credentials_from_env(payload.include_shopify)
-    if payload.include_shiprocket_mock:
-        credentials["shiprocket"] = {}
-
+    credentials = _credentials_from_env(payload)
     results = run_sync(payload.merchant_id, credentials, since_days=payload.since_days)
     return {
         "job_id": None,
@@ -154,12 +190,12 @@ def sync(
 
 
 @app.get("/api/sync/status")
-def sync_status(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+def sync_status(merchant_id: str = Query(default="merchant_demo")) -> list[dict]:
     return get_sync_status(merchant_id)
 
 
 @app.get("/api/agent/runs")
-def agent_runs(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+def agent_runs(merchant_id: str = Query(default="merchant_demo")) -> list[dict]:
     result = (
         get_client()
         .table("agent_runs")
@@ -173,7 +209,7 @@ def agent_runs(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
 
 
 @app.post("/api/agent/run")
-def agent_run(merchant_id: str = Query(default="demo_merchant")) -> dict:
+def agent_run(merchant_id: str = Query(default="merchant_demo")) -> dict:
     mismatches = find_weight_mismatches(merchant_id)
     grouped: dict[str, dict] = defaultdict(
         lambda: {"courier": "", "shipment_count": 0, "total_disputed_inr": 0.0, "shipment_ids": []}
@@ -229,7 +265,7 @@ def agent_run(merchant_id: str = Query(default="demo_merchant")) -> dict:
 
 
 @app.get("/api/disputes")
-def disputes(merchant_id: str = Query(default="demo_merchant")) -> list[dict]:
+def disputes(merchant_id: str = Query(default="merchant_demo")) -> list[dict]:
     return _get_disputes(merchant_id)
 
 
@@ -279,41 +315,12 @@ def run_tool(request: ToolRequest) -> dict:
 
 @app.post("/api/chat")
 def chat(request: ChatRequest) -> dict:
-    message = request.message.lower()
-
-    if "weight" in message or "overcharge" in message or "dispute" in message:
-        tool = "find_weight_mismatches"
-        result = find_weight_mismatches(request.merchant_id)
-        answer = (
-            f"Found {result['total_count']} weight mismatches worth about "
-            f"INR {result['total_overcharge_inr']}."
-        )
-    elif "rto" in message or "return" in message:
-        tool = "get_rto_rate"
-        result = get_rto_rate(request.merchant_id)
-        answer = (
-            f"RTO rate is {result['rto_rate_pct']}% across "
-            f"{result['total_shipments']} shipments."
-        )
-    elif "top" in message and "sku" in message:
-        tool = "get_top_skus"
-        result = get_top_skus(request.merchant_id)
-        answer = f"Found top SKUs by revenue. Top result count: {len(result['top_skus'])}."
-    elif "inventory" in message or "stock" in message:
-        tool = "get_inventory_status"
-        result = get_inventory_status(request.merchant_id)
-        answer = f"Found {result['low_stock_count']} low-stock SKUs out of {result['total_skus']}."
-    else:
-        tool = None
-        result = {}
-        answer = "I can answer questions about weight disputes, RTO rate, top SKUs, and inventory."
-
+    answer = run_chat_loop(request.merchant_id, request.message, request.history)
+    row_ids = extract_row_ids(answer)
     return {
         "merchant_id": request.merchant_id,
         "response": answer,
         "answer": answer,
-        "citations": [],
-        "tool": tool,
-        "result": result,
-        "row_ids": result.get("row_ids", []),
+        "citations": _citation_metadata(row_ids),
+        "row_ids": row_ids,
     }

@@ -5,20 +5,21 @@ from connectors.base import NormalizedOrder, NormalizedShipment, NormalizedSKU
 from connectors.gsheets import GsheetsConnector
 from connectors.shiprocket_mock import MockShiprocketConnector
 from connectors.shopify import ShopifyConnector
-from db.client import insert_row, update_row, upsert_rows, dataclass_to_row
+from db.client import dataclass_to_row, get_client, insert_row, update_row, upsert_rows
 
 logger = logging.getLogger(__name__)
 
 
 def _build_connectors(merchant_id: str, credentials: dict):
+    """Order matters: Shopify first (SKU + inventory), then Sheets (cost/reorder overwrites), then Shiprocket."""
     connectors = []
 
     if "shopify" in credentials:
         connectors.append(ShopifyConnector(merchant_id, credentials["shopify"]))
     if "gsheets" in credentials:
         connectors.append(GsheetsConnector(merchant_id, credentials["gsheets"]))
-    # Shiprocket always present (mock for v0)
-    connectors.append(MockShiprocketConnector(merchant_id, credentials.get("shiprocket", {})))
+    if credentials.get("shiprocket_mock", True):
+        connectors.append(MockShiprocketConnector(merchant_id, credentials.get("shiprocket", {})))
 
     return connectors
 
@@ -31,7 +32,7 @@ def run_sync(merchant_id: str, credentials: dict, since_days: int = 30) -> dict:
         source = connector.get_source_name()
         job = insert_row("sync_jobs", {
             "merchant_id": merchant_id,
-            "connector": source,
+            "connector": "shiprocket" if source == "shiprocket_mock" else source,
             "status": "running",
             "started_at": datetime.utcnow().isoformat(),
         })
@@ -62,6 +63,21 @@ def run_sync(merchant_id: str, credentials: dict, since_days: int = 30) -> dict:
             skus: list[NormalizedSKU] = connector.fetch_sku_master()
             if skus:
                 rows = [dataclass_to_row(sk) for sk in skus]
+                if connector.get_source_name() == "gsheets":
+                    client = get_client()
+                    existing = (
+                        client.table("sku_master")
+                        .select("sku_id, inventory_quantity")
+                        .eq("merchant_id", merchant_id)
+                        .execute()
+                    ).data or []
+                    inv_map = {r["sku_id"]: r.get("inventory_quantity") for r in existing}
+                    for r in rows:
+                        sid = r.get("sku_id")
+                        if sid in inv_map and inv_map[sid] is not None:
+                            r["inventory_quantity"] = inv_map[sid]
+                        else:
+                            r.pop("inventory_quantity", None)
                 upsert_rows("sku_master", rows, ["merchant_id", "sku_id"])
                 row_count += len(skus)
                 logger.info(f"[{source}] Upserted {len(skus)} SKUs")

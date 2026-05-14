@@ -51,6 +51,7 @@ class NormalizedSKU:
     source_record_id: str
     ingested_at: datetime = field(default_factory=datetime.utcnow)
     raw_metadata: dict = field(default_factory=dict)
+    inventory_quantity: Optional[int] = None
 
 
 class ConnectorConfigError(Exception):

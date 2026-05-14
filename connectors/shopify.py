@@ -75,6 +75,11 @@ class ShopifyConnector(BaseConnector):
         for page in pages:
             for product in page.get("products", []):
                 for variant in product.get("variants", []):
+                    inv = variant.get("inventory_quantity")
+                    try:
+                        inventory_quantity = int(inv) if inv is not None else 0
+                    except (TypeError, ValueError):
+                        inventory_quantity = 0
                     skus.append(NormalizedSKU(
                         merchant_id=self.merchant_id,
                         sku_id=variant.get("sku") or str(variant["id"]),
@@ -89,6 +94,7 @@ class ShopifyConnector(BaseConnector):
                         source_record_id=str(variant["id"]),
                         ingested_at=ingested_at,
                         raw_metadata=variant,
+                        inventory_quantity=inventory_quantity,
                     ))
         return skus
 
