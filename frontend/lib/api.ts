@@ -99,7 +99,16 @@ async function apiFetch<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API ${res.status}: ${text}`);
+    let detail: string | undefined;
+    try {
+      const j = JSON.parse(text) as { detail?: unknown };
+      if (typeof j.detail === "string") {
+        detail = j.detail;
+      }
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail ?? `API ${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;
 }

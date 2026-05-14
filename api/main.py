@@ -7,6 +7,7 @@ from typing import Any, Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from groq import APIStatusError
 from pydantic import BaseModel, Field
 
 from chat.citation import extract_row_ids
@@ -85,8 +86,8 @@ def _credentials_from_env(payload: SyncRequest) -> dict:
     }
 
     if payload.include_shopify:
-        shop = os.environ.get("SHOPIFY_SHOP")
-        token = os.environ.get("SHOPIFY_ACCESS_TOKEN")
+        shop = (os.environ.get("SHOPIFY_SHOP") or "").strip()
+        token = (os.environ.get("SHOPIFY_ACCESS_TOKEN") or "").strip()
         if shop and token:
             credentials["shopify"] = {"shop": shop, "access_token": token}
 
@@ -315,7 +316,18 @@ def run_tool(request: ToolRequest) -> dict:
 
 @app.post("/api/chat")
 def chat(request: ChatRequest) -> dict:
-    answer = run_chat_loop(request.merchant_id, request.message, request.history)
+    try:
+        answer = run_chat_loop(request.merchant_id, request.message, request.history)
+    except APIStatusError as e:
+        if e.status_code in (413, 429):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Groq token or rate limit exceeded. Try a shorter message, clear chat history, "
+                    "or set GROQ_MODEL=llama-3.1-8b-instant for higher throughput."
+                ),
+            ) from e
+        raise HTTPException(status_code=502, detail="Groq API error") from e
     row_ids = extract_row_ids(answer)
     return {
         "merchant_id": request.merchant_id,

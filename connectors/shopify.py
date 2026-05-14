@@ -10,8 +10,9 @@ from connectors.base import BaseConnector, NormalizedOrder, NormalizedSKU, Norma
 class ShopifyConnector(BaseConnector):
     def __init__(self, merchant_id: str, credentials: dict):
         super().__init__(merchant_id, credentials)
-        self.shop = credentials["shop"]  # e.g. "mystore.myshopify.com"
-        self.access_token = credentials["access_token"]
+        # Strip: .env values often pick up trailing newlines/spaces and cause 401.
+        self.shop = str(credentials["shop"]).strip().removeprefix("https://").removesuffix("/")
+        self.access_token = str(credentials["access_token"]).strip()
         self.base_url = f"https://{self.shop}/admin/api/2024-01"
         self.headers = {"X-Shopify-Access-Token": self.access_token}
 

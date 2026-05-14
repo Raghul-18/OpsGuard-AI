@@ -1,11 +1,17 @@
 import json
 import os
+from copy import deepcopy
 from typing import Any
 
 from groq import Groq
 
 from chat.citation import enforce_citations
 from chat.tools import TOOL_DEFINITIONS
+
+# Groq on-demand tier hits TPM / per-request limits easily with long history + fat tool JSON.
+MAX_HISTORY_MESSAGES = 14
+MAX_MESSAGE_CHARS = 4000
+MAX_TOOL_JSON_CHARS = 11_000
 
 SYSTEM_PROMPT = """
 You are OpsGuard AI, an ops assistant for an Indian D2C brand.
@@ -19,6 +25,69 @@ WRITE RULE: You may only write data using mark_action_taken.
 Never call mark_action_taken unless the user explicitly asks to mark a specific reconciliation item as actioned and provides its ID.
 SCOPE RULE: Only answer questions about this merchant's data.
 """
+
+
+def _trim_history(history: list[dict] | None) -> list[dict]:
+    if not history:
+        return []
+    rows = [
+        {"role": h["role"], "content": h["content"]}
+        for h in history
+        if h.get("role") in {"user", "assistant"} and h.get("content")
+    ]
+    tail = rows[-MAX_HISTORY_MESSAGES:]
+    out = []
+    for h in tail:
+        c = h["content"]
+        if len(c) > MAX_MESSAGE_CHARS:
+            c = c[: MAX_MESSAGE_CHARS - 20] + "\n...[truncated]"
+        out.append({"role": h["role"], "content": c})
+    return out
+
+
+def _shrink_tool_result(data: Any) -> Any:
+    """Keep tool totals but cap large lists so follow-up completions stay under token limits."""
+    if not isinstance(data, dict):
+        return data
+    out = deepcopy(data)
+    mm = out.get("mismatches")
+    if isinstance(mm, list) and len(mm) > 35:
+        out["mismatches"] = mm[:35]
+        out["_mismatches_omitted"] = len(mm) - 35
+    low = out.get("low_stock_skus")
+    if isinstance(low, list) and len(low) > 60:
+        out["low_stock_skus"] = low[:60]
+        out["_low_stock_omitted"] = len(low) - 60
+    rids = out.get("row_ids")
+    if isinstance(rids, list) and len(rids) > 150:
+        out["row_ids"] = rids[:150]
+        out["_row_ids_omitted"] = len(rids) - 150
+    return out
+
+
+def _tool_json_for_model(result: Any) -> str:
+    shrunk = _shrink_tool_result(result)
+    raw = json.dumps(shrunk, default=str)
+    if len(raw) <= MAX_TOOL_JSON_CHARS:
+        return raw
+    if isinstance(shrunk, dict) and isinstance(shrunk.get("mismatches"), list):
+        mm_full = shrunk["mismatches"]
+        total = shrunk.get("total_count", len(mm_full))
+        for cap in (25, 15, 10, 5):
+            s2 = dict(shrunk)
+            s2["mismatches"] = mm_full[:cap]
+            s2["_mismatches_shown"] = cap
+            s2["_mismatches_omitted"] = max(0, int(total) - cap) if isinstance(total, (int, float)) else len(mm_full) - cap
+            raw = json.dumps(s2, default=str)
+            if len(raw) <= MAX_TOOL_JSON_CHARS:
+                return raw
+    return json.dumps(
+        {
+            "_error": "tool_payload_too_large",
+            "_hint": "Try a narrower question (e.g. fewer days for weight mismatches).",
+        },
+        default=str,
+    )
 
 
 def _tool_functions() -> dict[str, Any]:
@@ -47,10 +116,12 @@ def run_chat_loop(merchant_id: str, message: str, history: list[dict] | None = N
 
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for item in history or []:
-        if item.get("role") in {"user", "assistant"} and item.get("content"):
-            messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": f"merchant_id={merchant_id}\n\n{message}"})
+    for item in _trim_history(history):
+        messages.append(item)
+    user_block = f"merchant_id={merchant_id}\n\n{message}"
+    if len(user_block) > MAX_MESSAGE_CHARS:
+        user_block = user_block[: MAX_MESSAGE_CHARS - 20] + "\n...[truncated]"
+    messages.append({"role": "user", "content": user_block})
 
     model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
     functions = _tool_functions()
@@ -97,7 +168,7 @@ def run_chat_loop(merchant_id: str, message: str, history: list[dict] | None = N
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "name": name,
-                "content": json.dumps(result, default=str),
+                "content": _tool_json_for_model(result),
             })
 
     return "The chat loop reached its tool-call limit before producing an answer."
