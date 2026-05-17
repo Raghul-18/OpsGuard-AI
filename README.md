@@ -2,7 +2,6 @@
 ### Autonomous Operations Assistant for Indian D2C Brands
 
 > **Stack:** FastAPI · Supabase · Groq · Next.js 14 (App Router, TypeScript, Tailwind CSS, shadcn/ui)
-> **Deadline:** Sunday, 17 May 2026, 11:59 PM IST
 
 ---
 
@@ -390,4 +389,4 @@ curl -X POST "http://127.0.0.1:8000/api/agent/run?merchant_id=merchant_demo"
 
 ---
 
-*OpsGuard AI · FastAPI + Supabase + Groq + Next.js 14 · Deadline 17 May 2026*
+*OpsGuard AI · FastAPI + Supabase + Groq + Next.js 14*
