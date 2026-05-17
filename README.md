@@ -366,13 +366,6 @@ uvicorn api.main:app --host 127.0.0.1 --port 8000
 cd frontend && npm install && npm run dev -- -H 127.0.0.1 -p 3000
 ```
 
-### Trigger a sync and agent run
-
-```bash
-curl -X POST "http://127.0.0.1:8000/api/sync?merchant_id=merchant_demo"
-curl -X POST "http://127.0.0.1:8000/api/agent/run?merchant_id=merchant_demo"
-```
-
 ### Environment Variables
 
 | Variable | Description |
