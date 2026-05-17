@@ -23,7 +23,7 @@
 | **Google Sheets** | This is how Indian D2C teams actually manage cost prices, packaging weights, and courier rates — no SQL, no ERP, just a shared Sheet. Ignoring it means the system cannot answer any question that requires margin. It is also the connector that builds trust with non-technical founders because it requires zero migration. |
 | **Shiprocket (mock for v0)** | Fulfilment-shaped data: actual charged weights, couriers, pincodes, and INR costs. The mock is built to Shiprocket's real response shape so it can be replaced with a real connector with zero changes to the agent or chat layer. The mock is honest about being a mock — see Eval. |
 
-**Why not Razorpay, Amazon, or WooCommerce first?** Shopify + Sheets + Shiprocket is the exact data triangle that answers the most valuable cross-tool question for an Indian D2C brand: "Is this SKU profitable after actual shipping cost?" That question cannot be answered without all three. Razorpay adds settlement reconciliation — the right next layer, listed in Section 9.
+**Why not Razorpay, Amazon, or WooCommerce first?** Shopify + Sheets + Shiprocket is the exact data triangle that answers the most valuable cross-tool question for an Indian D2C brand: "Is this SKU profitable after actual shipping cost?" That question cannot be answered without all three. Razorpay adds settlement reconciliation which is the right next layer, listed in Section 9.
 
 ---
 
