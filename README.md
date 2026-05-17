@@ -2,10 +2,11 @@
 ### Autonomous Operations Assistant for Indian D2C Brands
 
 > **Stack:** FastAPI · Supabase · Groq · Next.js 14 (App Router, TypeScript, Tailwind CSS, shadcn/ui)
+> **Deadline:** Sunday, 17 May 2026, 11:59 PM IST
 
 ---
 
-## 1. What I Built — 5-Line Architecture
+## 1. Architecture — 5-Line Summary
 
 1. **Connectors** — Three implementations of a shared `BaseConnector` abstract class return the same normalized types: `NormalizedOrder`, `NormalizedShipment`, `NormalizedSKU`. The chat layer and agent import nothing connector-specific.
 2. **Sync** — A sync runner pulls from each source and upserts into Supabase with `merchant_id`, `source`, `source_record_id`, and `ingested_at` on every row; `sync_jobs` tracks state per connector run.
@@ -23,7 +24,7 @@
 | **Google Sheets** | This is how Indian D2C teams actually manage cost prices, packaging weights, and courier rates — no SQL, no ERP, just a shared Sheet. Ignoring it means the system cannot answer any question that requires margin. It is also the connector that builds trust with non-technical founders because it requires zero migration. |
 | **Shiprocket (mock for v0)** | Fulfilment-shaped data: actual charged weights, couriers, pincodes, and INR costs. The mock is built to Shiprocket's real response shape so it can be replaced with a real connector with zero changes to the agent or chat layer. The mock is honest about being a mock — see Eval. |
 
-**Why not Razorpay, Amazon, or WooCommerce first?** Shopify + Sheets + Shiprocket is the exact data triangle that answers the most valuable cross-tool question for an Indian D2C brand: "Is this SKU profitable after actual shipping cost?" You cannot answer that without all three. Razorpay adds settlement reconciliation — the right next layer, listed in Section 9.
+**Why not Razorpay, Amazon, or WooCommerce first?** Shopify + Sheets + Shiprocket is the exact data triangle that answers the most valuable cross-tool question for an Indian D2C brand: "Is this SKU profitable after actual shipping cost?" That question cannot be answered without all three. Razorpay adds settlement reconciliation — the right next layer, listed in Section 9.
 
 ---
 
@@ -54,7 +55,7 @@ Every table is built on five invariants:
 | `ordered_at` | timestamptz | Original order timestamp |
 | `source` | text | e.g. `shopify` |
 | `source_record_id` | text | Shopify order ID |
-| `ingested_at` | timestamptz | When we pulled it |
+| `ingested_at` | timestamptz | Timestamp of ingestion |
 | `raw_metadata` | jsonb | Full API response |
 
 **`shipments`**
@@ -101,7 +102,7 @@ Every table is built on five invariants:
 | `merchant_id` | text NOT NULL | |
 | `shipment_id` | uuid FK | References `shipments.id` |
 | `discrepancy_type` | text | `weight_overcharge` / `rto_high_risk` |
-| `declared_value` | numeric | What we said (kg or %) |
+| `declared_value` | numeric | Merchant-declared value (kg or %) |
 | `charged_value` | numeric | What was billed |
 | `amount_disputed_inr` | numeric | Calculated overcharge |
 | `status` | text | `open` / `actioned` / `dismissed` |
@@ -292,11 +293,11 @@ Of the four plausible first agents — weight disputes, RTO patterns, inventory 
 
 ## 8. Hours Spent
 
-16 hours across 4 sessions over 3 days.
+~20 hours across 5 sessions over 4 days.
 
 ---
 
-## 9. What I'd Do With Another Week
+## 9. With Another Week
 
 **Real Shiprocket connector** — auth, pagination, delta pulls via `updated_at`, validate weight dispute output against actual billing data. This is what makes the agent's rupee figures real.
 
@@ -320,9 +321,11 @@ Of the four plausible first agents — weight disputes, RTO patterns, inventory 
 
 ## 10. AI Tools Used
 
-Claude (Anthropic) was used for architecture planning, schema design, tool schema definitions, citation enforcement logic, system prompt drafting, and README structure. GitHub Copilot was used for boilerplate FastAPI route structure, Next.js component scaffolding, and Groq tool-use loop plumbing, with suggestions reviewed and accepted selectively.
+**Claude (Anthropic)** — architecture planning, schema design, tool schema definitions, citation enforcement logic, system prompt drafting, and README structure.
 
-What I wrote: connector interfaces, mock data design, Supabase schema and RLS policies, citation contract, agent trigger/decision/action logic, scale analysis, and all final debugging.
+**OpenAI Codex** — boilerplate FastAPI route structure, Next.js component scaffolding, and Groq tool-use loop plumbing, with generated suggestions reviewed and accepted selectively.
+
+Connector interfaces, mock data design, Supabase schema and RLS policies, citation contract, agent trigger/decision/action logic, scale analysis, and all final debugging were written directly.
 
 ---
 
@@ -387,4 +390,4 @@ curl -X POST "http://127.0.0.1:8000/api/agent/run?merchant_id=merchant_demo"
 
 ---
 
-*OpsGuard AI · FastAPI + Supabase + Groq + Next.js 14*
+*OpsGuard AI · FastAPI + Supabase + Groq + Next.js 14 · Deadline 17 May 2026*
