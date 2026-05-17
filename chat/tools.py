@@ -7,56 +7,78 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from db.client import get_client
-
-# Per-kg slab rates (aligned with connectors/shiprocket_mock.RATE_PER_KG); used instead of back-solving from invoice cost.
-COURIER_RATE_INR_PER_KG = {
-    "Delhivery": 45,
-    "BlueDart": 55,
-    "Ecom Express": 40,
-    "XpressBees": 42,
-    "DTDC": 38,
-}
+from db.rates import (
+    billable_weight_kg,
+    get_db_slabs,
+    rate_card_stale_warning,
+    weight_mismatch_overcharge_inr,
+)
 
 
 def find_weight_mismatches(merchant_id: str, days: int = 30) -> dict:
-    """Find shipments where charged weight > declared weight × 1.1."""
+    """Find shipments where charged weight is above the fair 0.5 kg slab for declared weight."""
     client = get_client()
     since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    stale = rate_card_stale_warning(merchant_id)
+    has_slabs = bool(get_db_slabs(merchant_id))
 
     result = (
         client.table("shipments")
-        .select("id, shipment_ref, courier_name, weight_declared_kg, weight_charged_kg, shipping_cost_inr, destination_pincode, ingested_at")
+        .select(
+            "id, shipment_ref, courier_name, weight_declared_kg, weight_charged_kg, "
+            "shipping_cost_inr, destination_pincode, ingested_at, raw_metadata"
+        )
         .eq("merchant_id", merchant_id)
         .gte("ingested_at", since)
         .execute()
     )
 
     mismatches = []
-    for row in result.data:
-        declared = row["weight_declared_kg"] or 0
-        charged = row["weight_charged_kg"] or 0
-        if declared > 0 and charged > declared * 1.1:
-            overcharge_kg = charged - declared
-            courier = row.get("courier_name") or ""
-            rate = COURIER_RATE_INR_PER_KG.get(courier, 45)
-            overcharge_inr = round(overcharge_kg * rate, 2)
+    slab_priced = 0
+    for row in result.data or []:
+        declared = float(row["weight_declared_kg"] or 0)
+        charged = float(row["weight_charged_kg"] or 0)
+        fair_slab = billable_weight_kg(declared) if declared > 0 else 0.0
+        # Dispute only when billed above nearest slab (e.g. 0.5→1), not fair slab billing (0.8→1)
+        if declared > 0 and charged > fair_slab + 1e-6:
+            meta = row.get("raw_metadata")
+            if not isinstance(meta, dict):
+                meta = {}
+            over, src, zone = weight_mismatch_overcharge_inr(
+                merchant_id,
+                str(row.get("courier_name") or ""),
+                str(row.get("destination_pincode") or ""),
+                declared,
+                charged,
+                float(row.get("shipping_cost_inr") or 0),
+                meta,
+            )
+            if src.startswith("slab"):
+                slab_priced += 1
             mismatches.append({
                 "row_id": row["id"],
                 "shipment_ref": row["shipment_ref"],
                 "courier_name": row["courier_name"],
+                "zone": zone,
                 "weight_declared_kg": declared,
                 "weight_charged_kg": charged,
-                "overcharge_inr": overcharge_inr,
+                "pricing_model": src,
+                "overcharge_inr": over,
                 "destination_pincode": row["destination_pincode"],
             })
 
     total_overcharge = sum(m["overcharge_inr"] for m in mismatches)
-    return {
+    out = {
         "mismatches": mismatches,
         "total_count": len(mismatches),
         "total_overcharge_inr": round(total_overcharge, 2),
         "row_ids": [m["row_id"] for m in mismatches],
+        "slab_rows_from_db": has_slabs,
+        "mismatches_priced_with_slabs": slab_priced,
     }
+    if stale:
+        out["rate_card_stale_warning"] = stale
+    return out
 
 
 def get_rto_rate(merchant_id: str, sku_id: Optional[str] = None, pincode: Optional[str] = None) -> dict:

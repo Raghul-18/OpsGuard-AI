@@ -33,7 +33,7 @@ export default function AgentPage() {
         </p>
         <p>
           The agent scans the last 30 days of shipments and flags any where{" "}
-          <code className="bg-surface-3 px-1 rounded font-mono">weight_charged_kg &gt; weight_declared_kg × 1.1</code>.
+          <code className="bg-surface-3 px-1 rounded font-mono">weight_charged_kg &gt; billable slab for declared weight</code>.
         </p>
         <p>
           For each flagged shipment it calculates the overcharge, groups by courier,

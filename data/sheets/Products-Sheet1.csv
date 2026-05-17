@@ -1,0 +1,22 @@
+SKU,Product Name,Cost Price,Packaging Weight (g),Reorder Level,Category
+SNOW-LIQ-001,The Collection Snowboard: Liquid,299.98,3,5,Snowboard
+SNOW-MM-001,The Multi-managed Snowboard,251.98,3,5,Snowboard
+SNOW-3P-001,The 3p Fulfilled Snowboard,1051.98,3,5,Snowboard
+SNOW-OXY-001,The Collection Snowboard: Oxygen,410,3,5,Snowboard
+SNOW-ML-001,The Multi-location Snowboard,291.98,3,5,Snowboard
+WAX-REG-001,Selling Plans Ski Wax (Regular),9.98,160,20,Accessories
+WAX-SPC-001,Selling Plans Ski Wax (Special),19.98,200,15,Accessories
+WAX-SMP-001,Selling Plans Ski Wax (Sample),3.98,40,25,Accessories
+SNOW-VID-001,The Videographer Snowboard,354.38,3,5,Snowboard
+SNOW-OOS-001,The Out of Stock Snowboard,354.38,3,5,Snowboard
+SNOW-HID-001,The Hidden Snowboard,299.98,3,5,Snowboard
+SNOW-HYD-001,The Collection Snowboard: Hydrogen,240,3,5,Snowboard
+SNOW-CAP-001,The Compare at Price Snowboard,314.38,3,5,Snowboard
+SNOW-COMP-ICE,The Complete Snowboard (Ice),279.98,3,5,Snowboard
+SNOW-COMP-DWN,The Complete Snowboard (Dawn),279.98,3,5,Snowboard
+SNOW-COMP-PWD,The Complete Snowboard (Powder),279.98,3,5,Snowboard
+SNOW-COMP-ELC,The Complete Snowboard (Electric),279.98,3,5,Snowboard
+SNOW-COMP-SNS,The Complete Snowboard (Sunset),279.98,3,5,Snowboard
+SNOW-MIN-001,The Minimal Snowboard,354.38,3,5,Snowboard
+SNOW-DFT-001,The Draft Snowboard,1051.98,3,5,Snowboard
+sku-untracked-1,The Inventory Not Tracked Snowboard,379.98,3,5,Snowboard

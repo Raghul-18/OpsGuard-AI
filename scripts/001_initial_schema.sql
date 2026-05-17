@@ -1,5 +1,17 @@
 -- OpsGuard AI - Initial Schema
 -- Run this in the Supabase SQL editor.
+--
+-- WARNING: The block below drops every OpsGuard table and all of its data.
+-- Comment it out if you need to preserve existing rows.
+
+DROP TABLE IF EXISTS reconciliation_results CASCADE;
+DROP TABLE IF EXISTS agent_runs CASCADE;
+DROP TABLE IF EXISTS sync_jobs CASCADE;
+DROP TABLE IF EXISTS courier_rate_slabs CASCADE;
+DROP TABLE IF EXISTS courier_rate_card CASCADE;
+DROP TABLE IF EXISTS sku_master CASCADE;
+DROP TABLE IF EXISTS shipments CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -75,6 +87,46 @@ CREATE POLICY tenant_isolation_sku_master ON sku_master
     USING (merchant_id = current_setting('app.merchant_id', true))
     WITH CHECK (merchant_id = current_setting('app.merchant_id', true));
 
+-- courier_rate_card (Google Sheets rate tab; INR per kg by courier name)
+CREATE TABLE IF NOT EXISTS courier_rate_card (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id         TEXT NOT NULL,
+    courier_name        TEXT NOT NULL,
+    rate_inr_per_kg     NUMERIC NOT NULL,
+    effective_from      TIMESTAMPTZ,
+    source              TEXT,
+    source_record_id    TEXT,
+    ingested_at         TIMESTAMPTZ DEFAULT now(),
+    raw_metadata        JSONB,
+    UNIQUE (merchant_id, courier_name)
+);
+
+ALTER TABLE courier_rate_card ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_courier_rates ON courier_rate_card
+    USING (merchant_id = current_setting('app.merchant_id', true))
+    WITH CHECK (merchant_id = current_setting('app.merchant_id', true));
+
+-- courier_rate_slabs: Courier × Zone × slab INR (Google Sheets matrix)
+CREATE TABLE IF NOT EXISTS courier_rate_slabs (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id                 TEXT NOT NULL,
+    courier_name                TEXT NOT NULL,
+    zone                        TEXT NOT NULL,
+    rate_upto_500g_inr          NUMERIC NOT NULL,
+    rate_upto_1kg_inr           NUMERIC NOT NULL,
+    rate_additional_500g_inr    NUMERIC NOT NULL,
+    source                      TEXT,
+    source_record_id            TEXT,
+    ingested_at                 TIMESTAMPTZ DEFAULT now(),
+    raw_metadata                JSONB,
+    UNIQUE (merchant_id, courier_name, zone)
+);
+
+ALTER TABLE courier_rate_slabs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_courier_slabs ON courier_rate_slabs
+    USING (merchant_id = current_setting('app.merchant_id', true))
+    WITH CHECK (merchant_id = current_setting('app.merchant_id', true));
+
 -- reconciliation_results
 CREATE TABLE IF NOT EXISTS reconciliation_results (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -143,9 +195,62 @@ CREATE INDEX IF NOT EXISTS idx_shipments_merchant ON shipments(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_shipments_courier ON shipments(merchant_id, courier_name);
 CREATE INDEX IF NOT EXISTS idx_shipments_order_ref ON shipments(merchant_id, order_ref);
 CREATE INDEX IF NOT EXISTS idx_sku_master_merchant ON sku_master(merchant_id, sku_id);
+CREATE INDEX IF NOT EXISTS idx_courier_rates_merchant ON courier_rate_card(merchant_id, courier_name);
+CREATE INDEX IF NOT EXISTS idx_courier_rates_ingested ON courier_rate_card(merchant_id, ingested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_courier_slabs_merchant ON courier_rate_slabs(merchant_id, courier_name, zone);
+CREATE INDEX IF NOT EXISTS idx_courier_slabs_ingested ON courier_rate_slabs(merchant_id, ingested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_merchant ON reconciliation_results(merchant_id, status);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_created ON reconciliation_results(merchant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_merchant ON agent_runs(merchant_id, run_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_merchant ON sync_jobs(merchant_id, connector);
 
 -- Existing deployments: add inventory column if missing
 ALTER TABLE sku_master ADD COLUMN IF NOT EXISTS inventory_quantity INTEGER;
+
+-- Existing deployments: courier rate card table
+CREATE TABLE IF NOT EXISTS courier_rate_card (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id         TEXT NOT NULL,
+    courier_name        TEXT NOT NULL,
+    rate_inr_per_kg     NUMERIC NOT NULL,
+    effective_from      TIMESTAMPTZ,
+    source              TEXT,
+    source_record_id    TEXT,
+    ingested_at         TIMESTAMPTZ DEFAULT now(),
+    raw_metadata        JSONB,
+    UNIQUE (merchant_id, courier_name)
+);
+ALTER TABLE courier_rate_card ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY tenant_isolation_courier_rates ON courier_rate_card
+    USING (merchant_id = current_setting('app.merchant_id', true))
+    WITH CHECK (merchant_id = current_setting('app.merchant_id', true));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_courier_rates_merchant ON courier_rate_card(merchant_id, courier_name);
+CREATE INDEX IF NOT EXISTS idx_courier_rates_ingested ON courier_rate_card(merchant_id, ingested_at DESC);
+
+CREATE TABLE IF NOT EXISTS courier_rate_slabs (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id                 TEXT NOT NULL,
+    courier_name                TEXT NOT NULL,
+    zone                        TEXT NOT NULL,
+    rate_upto_500g_inr          NUMERIC NOT NULL,
+    rate_upto_1kg_inr           NUMERIC NOT NULL,
+    rate_additional_500g_inr    NUMERIC NOT NULL,
+    source                      TEXT,
+    source_record_id            TEXT,
+    ingested_at                 TIMESTAMPTZ DEFAULT now(),
+    raw_metadata                JSONB,
+    UNIQUE (merchant_id, courier_name, zone)
+);
+ALTER TABLE courier_rate_slabs ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  CREATE POLICY tenant_isolation_courier_slabs ON courier_rate_slabs
+    USING (merchant_id = current_setting('app.merchant_id', true))
+    WITH CHECK (merchant_id = current_setting('app.merchant_id', true));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_courier_slabs_merchant ON courier_rate_slabs(merchant_id, courier_name, zone);
+CREATE INDEX IF NOT EXISTS idx_courier_slabs_ingested ON courier_rate_slabs(merchant_id, ingested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_created ON reconciliation_results(merchant_id, created_at DESC);

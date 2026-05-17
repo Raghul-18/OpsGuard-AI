@@ -40,6 +40,8 @@ def main() -> int:
             "for Sheets sync",
         ),
         ("GOOGLE_SERVICE_ACCOUNT_JSON", nonempty("GOOGLE_SERVICE_ACCOUNT_JSON"), "for Sheets sync"),
+        ("GSHEETS_RATE_SLABS_RANGE", nonempty("GSHEETS_RATE_SLABS_RANGE"), "optional Sheets courier × zone slab tab"),
+        ("GSHEETS_RATE_CARD_RANGE", nonempty("GSHEETS_RATE_CARD_RANGE"), "optional Sheets courier INR/kg tab"),
         ("GROQ_API_KEY", nonempty("GROQ_API_KEY"), "for chat"),
     ]
     bad = 0

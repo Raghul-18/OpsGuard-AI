@@ -1,11 +1,15 @@
 import os
+import time
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+import httpx
 from dotenv import load_dotenv
 from supabase import Client, create_client
+
+T = TypeVar("T")
 
 load_dotenv()
 
@@ -22,6 +26,20 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
     return value
+
+
+def execute_with_retry(fn: Callable[[], T], retries: int = 3) -> T:
+    """Retry transient Supabase / HTTP2 disconnects."""
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return fn()
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(0.4 * (attempt + 1))
+    assert last_err is not None
+    raise last_err
 
 
 def get_client() -> Client:

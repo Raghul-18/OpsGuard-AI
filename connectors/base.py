@@ -54,6 +54,32 @@ class NormalizedSKU:
     inventory_quantity: Optional[int] = None
 
 
+@dataclass
+class NormalizedCourierRate:
+    merchant_id: str
+    courier_name: str
+    rate_inr_per_kg: float
+    source: str
+    source_record_id: str
+    ingested_at: datetime = field(default_factory=datetime.utcnow)
+    raw_metadata: dict = field(default_factory=dict)
+    effective_from: Optional[datetime] = None
+
+
+@dataclass
+class NormalizedCourierRateSlab:
+    merchant_id: str
+    courier_name: str
+    zone: str
+    rate_upto_500g_inr: float
+    rate_upto_1kg_inr: float
+    rate_additional_500g_inr: float
+    source: str
+    source_record_id: str
+    ingested_at: datetime = field(default_factory=datetime.utcnow)
+    raw_metadata: dict = field(default_factory=dict)
+
+
 class ConnectorConfigError(Exception):
     pass
 

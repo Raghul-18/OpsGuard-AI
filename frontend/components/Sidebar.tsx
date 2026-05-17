@@ -9,12 +9,16 @@ import {
   Bot,
   AlertTriangle,
   Zap,
+  FileText,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MERCHANT_ID } from "@/lib/api";
 
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/reports/reconciliation", label: "Recon report", icon: FileText },
   { href: "/chat", label: "Ask OpsGuard", icon: MessageSquare },
   { href: "/sync", label: "Sync Status", icon: RefreshCw },
   { href: "/agent", label: "Agent Runs", icon: Bot },
@@ -46,7 +50,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 py-3 px-2 flex flex-col gap-0.5">
         {NAV.map(({ href, label, icon: Icon }) => {
-          const active = path === href;
+          const active = path === href || (href !== "/" && path.startsWith(href));
           return (
             <Link
               key={href}

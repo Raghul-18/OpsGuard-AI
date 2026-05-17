@@ -1,0 +1,32 @@
+Courier,Zone,Up to 500g,Up to 1kg,Additional 500g
+Delhivery,Local,38,76,22
+Delhivery,Metro,55,111,28
+Delhivery,National,57,113,30
+Delhivery,Remote/NE,87,175,45
+BlueDart,Local,110,150,55
+BlueDart,Metro,140,210,70
+BlueDart,National,160,250,85
+Xpressbees,Local,50,75,18
+Xpressbees,Metro,65,95,22
+Xpressbees,National,85,110,28
+Ecom Express,Local,55,82,20
+Ecom Express,Metro,70,98,24
+Ecom Express,National,90,118,30
+Shadowfax,Local,45,72,18
+Shadowfax,Metro,60,88,22
+Shadowfax,National,78,105,28
+DTDC,Local,60,90,25
+DTDC,Metro,85,120,32
+DTDC,National,100,130,38
+India Post,Local,28,38,10
+India Post,0-200km,70,85,15
+India Post,501-1000km,82,117,35
+India Post,1000km+,93,143,50
+Amazon Shipping,Local,60,82,20
+Amazon Shipping,Metro,75,110,26
+Amazon Shipping,National,90,140,35
+Ekart,Local,60,85,20
+Ekart,Metro,80,110,25
+Ekart,National,100,150,35
+Shiprocket Air,Metro,120,160,60
+Shiprocket Air,National,150,220,80

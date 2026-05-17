@@ -87,6 +87,60 @@ export interface ReconciliationResult {
   action_note: string | null;
 }
 
+export interface ReconciliationReportLine {
+  reconciliation_id: string;
+  shipment_id: string;
+  shipment_ref?: string;
+  courier_name: string;
+  status: string;
+  amount_disputed_inr: number;
+  declared_value?: number;
+  charged_value?: number;
+  created_at?: string;
+  destination_pincode?: string;
+}
+
+export interface ReconciliationReport {
+  merchant_id: string;
+  generated_at: string;
+  period: { from: string; days: number };
+  totals: {
+    lines: number;
+    amount_inr: number;
+    open_amount_inr: number;
+    by_status: Record<string, number>;
+  };
+  by_courier: {
+    courier: string;
+    line_count: number;
+    amount_inr: number;
+    open_amount_inr: number;
+  }[];
+  lines: ReconciliationReportLine[];
+  lines_truncated: boolean;
+}
+
+export interface AnalyticsOrdersResponse {
+  merchant_id: string;
+  generated_at: string;
+  period: { from: string; days: number };
+  summary: {
+    order_lines: number;
+    revenue_inr: number;
+    cod_lines: number;
+    prepaid_lines: number;
+  };
+  revenue_by_day: { date: string; revenue_inr: number }[];
+  top_pincodes: { pincode: string; revenue_inr: number; order_lines: number }[];
+  top_skus: {
+    sku_id: string;
+    units: number;
+    revenue_inr: number;
+    cogs_inr: number;
+    margin_inr: number;
+  }[];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -162,4 +216,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reconciliation_id: reconciliationId, note }),
     }),
+
+  getReconciliationReport: (days = 90, merchantId = MERCHANT_ID) =>
+    apiFetch<ReconciliationReport>(
+      `/api/reports/reconciliation?merchant_id=${encodeURIComponent(merchantId)}&days=${days}`
+    ),
+
+  getAnalyticsOrders: (days = 30, merchantId = MERCHANT_ID) =>
+    apiFetch<AnalyticsOrdersResponse>(
+      `/api/analytics/orders?merchant_id=${encodeURIComponent(merchantId)}&days=${days}`
+    ),
 };

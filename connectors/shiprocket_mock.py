@@ -1,41 +1,17 @@
 import random
-import uuid
 from datetime import datetime, timedelta
 
 from connectors.base import BaseConnector, NormalizedOrder, NormalizedShipment, NormalizedSKU
-
-COURIERS = ["Delhivery", "BlueDart", "Ecom Express", "XpressBees", "DTDC"]
-
-PINCODES = {
-    "400001": "Mumbai",
-    "110001": "Delhi",
-    "560001": "Bangalore",
-    "600001": "Chennai",
-    "500001": "Hyderabad",
-    "700001": "Kolkata",
-    "380001": "Ahmedabad",
-    "411001": "Pune",
-}
+from db.rates import (
+    ALL_DEMO_PINCODES,
+    billable_weight_kg,
+    merged_slabs,
+    slab_price_for,
+    zone_for_pincode,
+)
 
 # These pincodes have deliberately high RTO rates
 BAD_PINCODES = {"700001", "380001"}
-
-WEIGHT_SLABS = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
-
-RATE_PER_KG = {
-    "Delhivery": 45,
-    "BlueDart": 55,
-    "Ecom Express": 40,
-    "XpressBees": 42,
-    "DTDC": 38,
-}
-
-
-def next_slab(weight_kg: float) -> float:
-    for slab in WEIGHT_SLABS:
-        if weight_kg <= slab:
-            return slab
-    return weight_kg * 1.5
 
 
 class MockShiprocketConnector(BaseConnector):
@@ -43,35 +19,45 @@ class MockShiprocketConnector(BaseConnector):
         super().__init__(merchant_id, credentials)
         self._shipments = None
 
+    def _courier_pool(self) -> list[str]:
+        slabs = merged_slabs(self.merchant_id)
+        names = sorted({s["courier_name"] for s in slabs if s.get("courier_name")})
+        return names if names else ["Delhivery"]
+
     def _generate_mock_shipments(self, count: int = 200) -> list[dict]:
-        random.seed(42)  # Deterministic for tests
+        random.seed(42)
         shipments = []
         now = datetime.utcnow()
+        slabs = merged_slabs(self.merchant_id)
+        couriers = sorted({s["courier_name"] for s in slabs if s.get("courier_name")}) or ["Delhivery"]
 
         for i in range(count):
             days_ago = random.randint(0, 30)
             created_at = now - timedelta(days=days_ago)
 
-            pincode = random.choice(list(PINCODES.keys()))
-            courier = random.choice(COURIERS)
+            pincode = random.choice(ALL_DEMO_PINCODES)
+            courier = random.choice(couriers)
             is_cod = random.random() < 0.45
 
-            # High RTO in bad pincodes for COD
             if pincode in BAD_PINCODES and is_cod:
                 rto = random.random() < 0.20
             else:
                 rto = random.random() < 0.05
 
             declared_weight = round(random.choice([0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5]), 2)
+            zone = zone_for_pincode(pincode, courier, self.merchant_id, slabs=slabs)
 
-            # 30% of shipments have weight overcharge
+            # ~30% disputes: carrier bills one 0.5 kg slab above the fair (nearest) slab for declared weight
+            fair_slab = billable_weight_kg(declared_weight)
             if random.random() < 0.30:
-                charged_weight = next_slab(declared_weight * 1.1 + 0.05)
+                charged_weight = fair_slab + 0.5
             else:
-                charged_weight = next_slab(declared_weight)
+                charged_weight = fair_slab
 
-            rate = RATE_PER_KG[courier]
-            shipping_cost = round(charged_weight * rate + random.uniform(10, 30), 2)
+            base, _src = slab_price_for(
+                self.merchant_id, courier, zone, charged_weight, slabs=slabs
+            )
+            shipping_cost = round(base + random.uniform(5, 25), 2)
 
             status = "Delivered" if not rto else "RTO"
             if days_ago < 3:
@@ -89,6 +75,7 @@ class MockShiprocketConnector(BaseConnector):
                 "destination_pincode": pincode,
                 "payment_method": "COD" if is_cod else "prepaid",
                 "created_at": created_at.isoformat(),
+                "zone": zone,
             }
             shipments.append(shipment)
 
@@ -100,6 +87,8 @@ class MockShiprocketConnector(BaseConnector):
         return self._shipments
 
     def fetch_shipments(self, since: datetime) -> list[NormalizedShipment]:
+        # Regenerate on each sync so weight/slab logic changes are picked up without API restart.
+        self._shipments = None
         raw = self._get_shipments()
         result = []
         ingested_at = datetime.utcnow()

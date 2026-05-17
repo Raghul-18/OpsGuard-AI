@@ -1,11 +1,12 @@
 import logging
 from datetime import datetime, timedelta
 
-from connectors.base import NormalizedOrder, NormalizedShipment, NormalizedSKU
+from connectors.base import NormalizedCourierRate, NormalizedOrder, NormalizedShipment, NormalizedSKU
 from connectors.gsheets import GsheetsConnector
 from connectors.shiprocket_mock import MockShiprocketConnector
 from connectors.shopify import ShopifyConnector
 from db.client import dataclass_to_row, get_client, insert_row, update_row, upsert_rows
+from db.rates import clear_rates_cache
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,21 @@ def run_sync(merchant_id: str, credentials: dict, since_days: int = 30) -> dict:
                 upsert_rows("sku_master", rows, ["merchant_id", "sku_id"])
                 row_count += len(skus)
                 logger.info(f"[{source}] Upserted {len(skus)} SKUs")
+
+            if source == "gsheets":
+                slabs_list = connector.fetch_courier_rate_slabs()
+                if slabs_list:
+                    srows = [dataclass_to_row(s) for s in slabs_list]
+                    upsert_rows("courier_rate_slabs", srows, ["merchant_id", "courier_name", "zone"])
+                    row_count += len(slabs_list)
+                    logger.info(f"[{source}] Upserted {len(slabs_list)} courier slab rows")
+                rates_list: list[NormalizedCourierRate] = connector.fetch_courier_rates()
+                if rates_list:
+                    rrows = [dataclass_to_row(r) for r in rates_list]
+                    upsert_rows("courier_rate_card", rrows, ["merchant_id", "courier_name"])
+                    row_count += len(rates_list)
+                    logger.info(f"[{source}] Upserted {len(rates_list)} legacy courier INR/kg rows")
+                clear_rates_cache(merchant_id)
 
             if job_id:
                 update_row("sync_jobs", job_id, {
